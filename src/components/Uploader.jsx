@@ -209,7 +209,9 @@ export default function Uploader() {
         await appendRow(accessToken, videoSheetId, videoTab, [
           url,
           content,
-          affiliateId
+          affiliateId,
+          selectedAffName     // name (a01)
+
         ])
 
         update(rowKey, { status: 'done' })

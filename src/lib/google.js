@@ -33,12 +33,14 @@ export async function listSpreadsheets(accessToken) {
  * C: affiliate_id
  */
 export async function ensureSheetHeader(accessToken, spreadsheetId, tabName) {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName)}!A1:C1`
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/` +
+    `${encodeURIComponent(tabName)}!A1:D1`
 
-  const getRes = await fetch(url, {
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
-  const data = await getRes.json()
+  const data = await res.json()
 
   if (!data.values || data.values.length === 0) {
     await fetch(url + '?valueInputOption=USER_ENTERED', {
@@ -48,18 +50,19 @@ export async function ensureSheetHeader(accessToken, spreadsheetId, tabName) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        values: [['videoURL', 'content', 'affiliate_id']]
+        values: [['videoURL', 'content', 'affiliate_id', 'name']]
       })
     })
   }
 }
+
 
 /**
  * Append a row into VIDEO SHEET (A:C)
  * values = [videoURL, content, affiliate_id]
  */
 export async function appendRow(accessToken, spreadsheetId, tabName, values) {
-  const range = `${encodeURIComponent(tabName)}!A:C`
+  const range = `${encodeURIComponent(tabName)}!A:D`
   await axios.post(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append`,
     { values: [values] },
@@ -75,6 +78,7 @@ export async function appendRow(accessToken, spreadsheetId, tabName, values) {
     }
   )
 }
+
 
 /**
  * Load affiliate items from an AFFILIATE SHEET file:
