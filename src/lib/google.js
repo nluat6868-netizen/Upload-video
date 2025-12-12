@@ -7,17 +7,13 @@ export const SCOPES = [
 
 export function extractSpreadsheetId(input) {
   if (!input) return ''
-  // Allow plain ID
   if (/^[a-zA-Z0-9-_]{20,}$/.test(input) && !input.includes('http')) return input.trim()
-
-  // URL patterns: /spreadsheets/d/<id>
   const m = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
   if (m && m[1]) return m[1]
   return input.trim()
 }
 
 export async function listSpreadsheets(accessToken) {
-  // Needs drive scope (not just drive.file) to list user files.
   const res = await axios.get('https://www.googleapis.com/drive/v3/files', {
     headers: { Authorization: `Bearer ${accessToken}` },
     params: {
@@ -30,28 +26,38 @@ export async function listSpreadsheets(accessToken) {
   return res.data.files ?? []
 }
 
-export async function ensureIndustryTabs(accessToken, spreadsheetId, industryTabs = ['0','1','2']) {
-  const getRes = await axios.get(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    params: { fields: 'sheets(properties(sheetId,title))' }
-  })
-  const existing = new Set((getRes.data.sheets ?? []).map(s => s.properties?.title).filter(Boolean))
-  const toAdd = industryTabs.filter(t => !existing.has(t))
-  if (!toAdd.length) return
+/**
+ * Ensure header A1:C1 for VIDEO SHEET:
+ * A: videoURL
+ * B: content
+ * C: affiliate_id
+ */
+export async function ensureSheetHeader(accessToken, spreadsheetId, tabName) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(tabName)}!A1:C1`
 
-  const requests = toAdd.map(title => ({ addSheet: { properties: { title } } }))
-  await axios.post(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
-    { requests },
-    {
+  const getRes = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+  const data = await getRes.json()
+
+  if (!data.values || data.values.length === 0) {
+    await fetch(url + '?valueInputOption=USER_ENTERED', {
+      method: 'PUT',
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
-      }
-    }
-  )
+      },
+      body: JSON.stringify({
+        values: [['videoURL', 'content', 'affiliate_id']]
+      })
+    })
+  }
 }
 
+/**
+ * Append a row into VIDEO SHEET (A:C)
+ * values = [videoURL, content, affiliate_id]
+ */
 export async function appendRow(accessToken, spreadsheetId, tabName, values) {
   const range = `${encodeURIComponent(tabName)}!A:C`
   await axios.post(
@@ -62,13 +68,36 @@ export async function appendRow(accessToken, spreadsheetId, tabName, values) {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json'
       },
-      params: { valueInputOption: 'USER_ENTERED' }
+      params: {
+        valueInputOption: 'USER_ENTERED',
+        insertDataOption: 'INSERT_ROWS'
+      }
     }
   )
 }
 
+/**
+ * Load affiliate items from an AFFILIATE SHEET file:
+ * Assumption: In affTab, columns are:
+ * A: name (a01, a02, ...)
+ * B: productId (101, ...)
+ *
+ * range: A2:B
+ * return: [{ name, productId }]
+ */
+export async function loadAffiliateItems(accessToken, affiliateSpreadsheetId, affTab) {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${affiliateSpreadsheetId}/values/${encodeURIComponent(affTab)}!A2:B`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+  const data = await res.json()
+  const rows = data.values || []
+  return rows
+    .map(r => ({ name: (r?.[0] || '').trim(), productId: (r?.[1] || '').toString().trim() }))
+    .filter(x => x.name && x.productId)
+}
+
 export async function findOrCreateFolder(accessToken, folderName, parentId = 'root') {
-  // Find
   const q = [
     "mimeType='application/vnd.google-apps.folder'",
     `name='${folderName.replace(/'/g, "\\'")}'`,
@@ -78,17 +107,12 @@ export async function findOrCreateFolder(accessToken, folderName, parentId = 'ro
 
   const listRes = await axios.get('https://www.googleapis.com/drive/v3/files', {
     headers: { Authorization: `Bearer ${accessToken}` },
-    params: {
-      q,
-      fields: 'files(id,name)',
-      pageSize: 10
-    }
+    params: { q, fields: 'files(id,name)', pageSize: 10 }
   })
 
   const hit = (listRes.data.files ?? [])[0]
   if (hit?.id) return hit.id
 
-  // Create
   const createRes = await axios.post(
     'https://www.googleapis.com/drive/v3/files',
     {
@@ -123,11 +147,10 @@ export async function uploadVideoMultipart(accessToken, file, { parentFolderId }
     { headers: { Authorization: `Bearer ${accessToken}` } }
   )
 
-  return res.data // {id, webViewLink, webContentLink}
+  return res.data
 }
 
 export async function makeFilePublic(accessToken, fileId) {
-  // anyone with the link can view
   await axios.post(
     `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,
     { role: 'reader', type: 'anyone' },
@@ -139,38 +162,15 @@ export async function makeFilePublic(accessToken, fileId) {
     }
   )
 }
+
 export async function listDriveFolders(accessToken) {
-  const res = await fetch('https://www.googleapis.com/drive/v3/files?q=' +
-    encodeURIComponent("mimeType='application/vnd.google-apps.folder' and trashed=false") +
-    '&fields=' + encodeURIComponent('files(id,name)') +
-    '&pageSize=200&orderBy=modifiedTime desc', {
-      headers: { Authorization: `Bearer ${accessToken}` }
-    })
+  const res = await fetch(
+    'https://www.googleapis.com/drive/v3/files?q=' +
+      encodeURIComponent("mimeType='application/vnd.google-apps.folder' and trashed=false") +
+      '&fields=' + encodeURIComponent('files(id,name)') +
+      '&pageSize=200&orderBy=modifiedTime desc',
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  )
   const data = await res.json()
   return data.files || []
 }
-export async function ensureSheetHeader(accessToken, spreadsheetId, sheetTab) {
-  const url =
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/` +
-    `${encodeURIComponent(sheetTab)}!A1:B1`
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${accessToken}` }
-  })
-  const data = await res.json()
-
-  if (!data.values || data.values.length === 0) {
-    await fetch(url + '?valueInputOption=USER_ENTERED', {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [['videoURL', 'content']]
-      })
-    })
-  }
-}
-
-
