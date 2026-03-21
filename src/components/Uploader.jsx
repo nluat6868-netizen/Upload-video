@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useGoogleLogin } from '@react-oauth/google'
 import axios from 'axios'
 import {
@@ -48,7 +48,7 @@ const ls = {
 }
 
 export default function Uploader() {
-  const [accessToken, setAccessToken] = useState('')
+  const [accessToken, setAccessToken] = useState(ls.get('googleAccessToken', ''))
   const [userEmail, setUserEmail] = useState('')
 
   /* ===== Drive Folder ===== */
@@ -86,6 +86,7 @@ export default function Uploader() {
     prompt: 'consent',
     onSuccess: async ({ access_token }) => {
       setAccessToken(access_token)
+      ls.set('googleAccessToken', access_token)
       try {
         const me = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
           headers: { Authorization: `Bearer ${access_token}` }
@@ -96,6 +97,18 @@ export default function Uploader() {
     },
     onError: () => message.error('Đăng nhập Google lỗi')
   })
+
+  /* ===== Auto-load user info if token exists ===== */
+  useEffect(() => {
+    if (accessToken) {
+      fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      })
+        .then(r => r.json())
+        .then(me => setUserEmail(me?.email || ''))
+        .catch(() => {})
+    }
+  }, [])
 
   /* ===== Load Drive folders ===== */
   const loadFolders = async () => {
